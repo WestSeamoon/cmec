@@ -1,0 +1,22 @@
+[package]
+name = "adapt_sign"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+k256 = { path = "../k256"}
+
+#sign = { path = "../k256/schnorr/sign"}
+
+elliptic-curve = "0.12.1"
+
+signature = "1.5.0"
+
+#k256 = "0.11.2"
+
+hex-literal = "0.3"
+
+hex = "0.4.2"
