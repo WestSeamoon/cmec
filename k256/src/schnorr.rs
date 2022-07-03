@@ -98,7 +98,7 @@ pub struct Signature {
 
 impl Signature {
     /// Size of a Taproot Schnorr signature in bytes.
-    pub const BYTE_SIZE: usize = 64;
+    pub const BYTE_SIZE: usize = 96;
 
     /// Borrow the serialized signature as bytes.
     pub fn as_bytes(&self) -> &[u8; Self::BYTE_SIZE] {
@@ -119,6 +119,11 @@ impl Signature {
     fn split(&self) -> (&Scalar, &NonZeroScalar, &AffinePoint) {
         (self.r(), self.s(), &self.Q)
     }
+
+    fn pub_from_bytes(bytes:&[u8]) -> Result<Self> {
+        bytes.try_into()
+    }
+
 }
 
 impl AsRef<[u8]> for Signature {
@@ -154,7 +159,7 @@ impl TryFrom<&[u8]> for Signature {
     fn try_from(bytes: &[u8]) -> Result<Signature> {
         let bytes: [u8; Self::BYTE_SIZE] = bytes.try_into().map_err(|_| Error::new())?;
         let (r_bytes, sq_bytes) = bytes.split_at(Self::BYTE_SIZE / 3);
-        let (s_bytes, q_bytes) = sq_bytes.split_at(Self::BYTE_SIZE / 2);
+        let (s_bytes, q_bytes) = sq_bytes.split_at(Self::BYTE_SIZE / 3);
 
         let r_fe: FieldElement =
             Option::from(FieldElement::from_bytes(r_bytes.into())).ok_or_else(Error::new)?;
@@ -325,12 +330,12 @@ mod tests {
              76AFB1548AF603B3EB45C9F8207DEE1060CB71C04E80F593060B07D28308D7F4"
         );
 
-        let test_pre_sign = Signature::from_bytes(&test_signature).unwrap();
+        //let test_pre_sign = Signature::from_bytes(&test_signature).unwrap();
 
         let y = hex!("25D1DFF95105F5253C4022F628A996AD3A0D95FBF21D468A1B33F8C160D8F517");
 
         let sig = sk
-            .try_sign_prehashed(&test_pre_sign, &y)
+            .try_sign_prehashed(&test_signature, &y)
                 .unwrap_or_else(|_| {
                     panic!(
                         "low-level Schnorr signing failure for index 1"   

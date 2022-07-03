@@ -85,25 +85,6 @@ impl SigningKey {
     
 
 
-    pub fn test(&self, msg_digest: &[u8; 32], aux_rand: &[u8; 32]) -> (NonZeroScalar, AffinePoint) {
-
-        let mut t = tagged_hash(AUX_TAG).chain_update(aux_rand).finalize();
-
-        for (a, b) in t.iter_mut().zip(self.secret_key.to_bytes().iter()) {
-            *a ^= b
-        }
-
-        let rand = tagged_hash(NONCE_TAG)
-            .chain_update(&t)
-            .chain_update(&self.verifying_key.as_affine().x.to_bytes())
-            .chain_update(msg_digest)
-            .finalize();
-
-        let (k, K) = SigningKey::raw_from_bytes(&rand).unwrap();
-
-        (k, K)
-        
-    }
 
     
     pub fn try_pre_sign_prehashed(
@@ -171,11 +152,11 @@ impl SigningKey {
         let pre_sign: NonZeroScalar = Option::from(NonZeroScalar::new(pre_sign)).ok_or_else(Error::new)?;
 
         let mut bytes = [0u8; Signature::BYTE_SIZE];
-        let (r_bytes, s_bytes) = bytes.split_at_mut(Signature::BYTE_SIZE / 2);
-        //let (s_bytes, q_bytes) = sq_bytes.split_at_mut(Signature::BYTE_SIZE / 2);
+        let (r_bytes, sq_bytes) = bytes.split_at_mut(Signature::BYTE_SIZE / 3);
+        let (s_bytes, q_bytes) = sq_bytes.split_at_mut(Signature::BYTE_SIZE / 3);
         r_bytes.copy_from_slice(&r.to_bytes());
-        s_bytes.copy_from_slice(&pre_sign.to_bytes());   
-        //q_bytes.copy_from_slice(&Q.from_bytes()); 
+        s_bytes.copy_from_slice(&pre_sign.to_bytes());  
+        q_bytes.copy_from_slice(&Q.x.to_bytes()); 
         let sig = Signature { bytes, r: r, sign: pre_sign, Q:Q };
 
         Ok(sig)
@@ -185,9 +166,11 @@ impl SigningKey {
     //适配算法，获取签名值
     pub fn try_sign_prehashed(
         &self,
-        &pre_sign: &Signature,
+        &pre_sign: &[u8; 96],
         y: &[u8; 32],
     ) -> Result<Signature> {
+
+        let pre_sign = Signature::pub_from_bytes(&pre_sign).unwrap();
 
         let (r, s, Q) = pre_sign.split();
 
@@ -206,21 +189,30 @@ impl SigningKey {
 
         let sign: NonZeroScalar = Option::from(NonZeroScalar::new(sign)).ok_or_else(Error::new)?;
 
+        let mut bytes = [0u8; Signature::BYTE_SIZE];
+        let (r_bytes, sq_bytes) = bytes.split_at_mut(Signature::BYTE_SIZE / 3);
+        let (s_bytes, q_bytes) = sq_bytes.split_at_mut(Signature::BYTE_SIZE / 3);
+        r_bytes.copy_from_slice(&r.to_bytes());
+        s_bytes.copy_from_slice(&sign.to_bytes());  
+        q_bytes.copy_from_slice(&Q.x.to_bytes()); 
+
         let sig = Signature { bytes, r, sign, Q };
 
         Ok(sig)
 
-        //提取y
-        //let yy = sign - pre_sign;
     }
 
 
     //提取算法，提取y
     pub fn try_extract_y(
         &self,
-        &pre_sign: &Signature,
-        &sign: &Signature,
-    ) -> Scalar { //[u8; 32] {
+        &pre_sign: &[u8; 96],
+        &sign: &[u8; 96],
+    ) -> [u8; 32] { //[u8; 32] {
+
+        let pre_sign = Signature::pub_from_bytes(&pre_sign).unwrap();
+
+        let sign = Signature::pub_from_bytes(&sign).unwrap();
 
         let (r, pre_sign, Q) = pre_sign.split();
 
@@ -230,9 +222,10 @@ impl SigningKey {
 
         //let y = Scalar::as_bytes();
 
-        let mut bytes = [0u8; Signature::BYTE_SIZE];
+        let mut y_bytes = [0u8; 32];
+        y_bytes.copy_from_slice(&y.to_bytes());
 
-        y
+        y_bytes
 
         //提取y
         //let yy = sign - pre_sign;
