@@ -212,6 +212,12 @@ impl Scalar {
         Self(U256::from_be_slice(bytes))
     }
 
+    ///FieldBytes to Scalar
+    pub fn pub_from_repr(bytes: FieldBytes) -> CtOption<Self> {
+        let inner = U256::from_be_byte_array(bytes);
+        CtOption::new(Self(inner), inner.ct_lt(&Secp256k1::ORDER))
+    }
+
     /// Raises the scalar to the power `2^k`.
     fn pow2k(&self, k: usize) -> Self {
         let mut x = *self;

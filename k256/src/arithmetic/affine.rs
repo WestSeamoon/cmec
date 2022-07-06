@@ -84,6 +84,11 @@ impl AffinePoint {
     pub(crate) const fn new(x: FieldElement, y: FieldElement) -> Self {
         Self { x, y, infinity: 0 }
     }
+
+    ///乘法
+    pub fn pub_mul(self, scalar: &Scalar) -> ProjectivePoint {
+        self.mul(scalar)
+    }
 }
 
 impl PrimeCurveAffine for AffinePoint {

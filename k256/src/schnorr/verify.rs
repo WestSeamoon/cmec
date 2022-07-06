@@ -1,6 +1,6 @@
 //! Taproot Schnorr verifying key.
 
-use super::{tagged_hash, Signature, CHALLENGE_TAG};
+use super::{tagged_hash, pre_Signature, Signature, CHALLENGE_TAG};
 use crate::{AffinePoint, FieldBytes, ProjectivePoint, PublicKey, Scalar};
 use ecdsa_core::signature::{DigestVerifier, Error, Result, Verifier};
 use elliptic_curve::{
@@ -30,7 +30,7 @@ impl VerifyingKey {
     ///
     /// The preferred interface is the [`Verifier`] trait.
     pub fn verify_prehashed(&self, msg_digest: &[u8; 32], sig: &Signature) -> Result<()> {
-        let (r, s, Q) = sig.split();
+        let (r, s) = sig.split();
 
         let e = <Scalar as Reduce<U256>>::from_be_bytes_reduced(
             tagged_hash(CHALLENGE_TAG)
@@ -57,24 +57,25 @@ impl VerifyingKey {
     }
 
 
+    ///验证预签名正确性
+    pub fn verify_pre_prehashed(&self, msg_digest: &[u8; 32], &pre_sign: &[u8; 96]) -> Result<()> { //[u8;32] {//
 
-
-
-    pub fn verify_pre_prehashed(&self, msg_digest: &[u8; 32], pre_sign: &Signature) -> Result<()> {
+        let pre_sign = pre_Signature::pub_from_bytes(&pre_sign).unwrap();
+        
+        //分解预签名
         let (r, s, Q) = pre_sign.split();
 
+        //将传入的消息m取哈希
         let hm = <Scalar as Reduce<U256>>::from_be_bytes_reduced(
             tagged_hash(CHALLENGE_TAG)
                 .chain_update(msg_digest)
                 .finalize(),
         );
 
-        //预签名验证
-        //let pre_sign_G = mul(ProjectivePoint::GENERATOR, s);
-
+        //计算r+s
         let rs = Scalar::add(r, s);
 
-
+        //计算KK = s·G + (r+s)·P
         let KK = ProjectivePoint::lincomb(
             &ProjectivePoint::GENERATOR,
             &*s,
@@ -83,33 +84,34 @@ impl VerifyingKey {
         )
         .to_affine();
 
-        let KK_pro = ProjectivePoint::from(Q);
+        //转换KK的类型
+        let KK_pro = ProjectivePoint::from(KK);
 
-        //let KK = &ProjectivePoint::GENERATOR * s + self.inner * (s + r);
+        //计算R = KK+Q
         let R = ProjectivePoint::add_mixed(&KK_pro, &Q).to_affine();
 
-        let f_x = <Scalar as Reduce<U256>>::from_be_bytes_reduced(R.x.to_bytes());
+        //取R的横坐标f_x
+        //let f_x = <Scalar as Reduce<U256>>::from_be_bytes_reduced(R.x.to_bytes());
+        let f_x = Scalar::pub_from_repr(R.x.to_bytes()).unwrap();
 
-        let rr = hm + f_x;
+        //计算rr
+        let rr = Scalar::add(&hm, &f_x);//hm + f_x;
+/*
+        let mut rr_bytes = [0u8; 32];
+        
+        rr_bytes.copy_from_slice(&rr.to_bytes());
 
+        rr_bytes
+*/
+        
+        //验证预签名解析出来的r与计算出来的rr是否相等，相等则验证通过，否则无效返回错误
         if rr != *r {
-            //验证通过
             return Err(Error::new());
+        } else {
+            Ok(())
         }
-
-        Ok(())
+        
     }
-
-
-
-
-
-
-
-
-
-
-
 
     /// Borrow the inner [`AffinePoint`] this type wraps.
     pub fn as_affine(&self) -> &AffinePoint {

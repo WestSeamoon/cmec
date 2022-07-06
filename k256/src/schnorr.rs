@@ -82,11 +82,10 @@ const AUX_TAG: &[u8] = b"BIP0340/aux";
 const NONCE_TAG: &[u8] = b"BIP0340/nonce";
 const CHALLENGE_TAG: &[u8] = b"BIP0340/challenge";
 
-/// Taproot Schnorr signature as defined in [BIP340].
-///
-/// [BIP340]: https://github.com/bitcoin/bips/blob/master/bip-0340.mediawiki
+
+/// 预签名结构及关联函数
 #[derive(Copy, Clone)]
-pub struct Signature {
+pub struct pre_Signature {
     pub bytes: [u8; Self::BYTE_SIZE],
 
     // for efficiency
@@ -96,7 +95,7 @@ pub struct Signature {
     Q: AffinePoint,
 }
 
-impl Signature {
+impl pre_Signature {
     /// Size of a Taproot Schnorr signature in bytes.
     pub const BYTE_SIZE: usize = 96;
 
@@ -118,6 +117,131 @@ impl Signature {
     /// Split this signature into its `r` and `s` components.
     fn split(&self) -> (&Scalar, &NonZeroScalar, &AffinePoint) {
         (self.r(), self.s(), &self.Q)
+    }
+
+    fn pub_from_bytes(bytes:&[u8]) -> Result<Self> {
+        bytes.try_into()
+    }
+
+}
+
+impl AsRef<[u8]> for pre_Signature {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl Eq for pre_Signature {}
+
+impl PartialEq for pre_Signature {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl PartialOrd for pre_Signature {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+// useful e.g. for BTreeMaps
+impl Ord for pre_Signature {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.bytes.cmp(&other.bytes)
+    }
+}
+
+impl TryFrom<&[u8]> for pre_Signature {
+    type Error = Error;
+
+    fn try_from(bytes: &[u8]) -> Result<pre_Signature> {
+        let bytes: [u8; Self::BYTE_SIZE] = bytes.try_into().map_err(|_| Error::new())?;
+        let (r_bytes, sq_bytes) = bytes.split_at(Self::BYTE_SIZE / 3);
+        let (s_bytes, q_bytes) = sq_bytes.split_at(Self::BYTE_SIZE / 3);
+
+        let r_fe: FieldElement =
+            Option::from(FieldElement::from_bytes(r_bytes.into())).ok_or_else(Error::new)?;
+
+        let r = <Scalar as Reduce<U256>>::from_be_bytes_reduced(r_fe.to_bytes());
+
+        // one of the rules for valid signatures: !is_infinite(R);
+        if r.is_zero().into() {
+            return Err(Error::new());
+        }
+
+        let sign = NonZeroScalar::try_from(s_bytes).map_err(|_| Error::new())?;
+
+
+        let result = match VerifyingKey::from_bytes(&q_bytes) {
+            Ok(q) => {
+                let Q = *q.as_affine();
+                Ok(Self { bytes, r, sign, Q})
+            },
+            Err(e) => Err(e),
+        };
+        result  
+    }
+}
+
+impl fmt::Debug for pre_Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.bytes.fmt(f)
+    }
+}
+
+impl signature::Signature for pre_Signature {
+    fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        bytes.try_into()
+    }
+}
+
+impl signature::PrehashSignature for pre_Signature {
+    type Digest = Sha256;
+}
+
+fn tagged_hash(tag: &[u8]) -> Sha256 {
+    let tag_hash = Sha256::digest(tag);
+    let mut digest = Sha256::new();
+    digest.update(&tag_hash);
+    digest.update(&tag_hash);
+    digest
+}
+
+
+///正式签名结构及其关联函数
+#[derive(Copy, Clone)]
+pub struct Signature {
+    ///签名大小
+    pub bytes: [u8; Self::BYTE_SIZE],
+
+    // for efficiency
+    r: Scalar,
+    sign: NonZeroScalar,
+}
+
+impl Signature {
+    /// Size of a Taproot Schnorr signature in bytes.
+    pub const BYTE_SIZE: usize = 64;
+
+    /// Borrow the serialized signature as bytes.
+    pub fn as_bytes(&self) -> &[u8; Self::BYTE_SIZE] {
+        &self.bytes
+    }
+
+    /// Get the `r` component of this signature.
+    fn r(&self) -> &Scalar {
+        &self.r
+    }
+
+    /// Get the `s` component of this signature.
+    fn s(&self) -> &NonZeroScalar {
+        &self.sign
+    }
+
+    /// Split this signature into its `r` and `s` components.
+    fn split(&self) -> (&Scalar, &NonZeroScalar) {
+        (self.r(), self.s())
     }
 
     fn pub_from_bytes(bytes:&[u8]) -> Result<Self> {
@@ -158,8 +282,7 @@ impl TryFrom<&[u8]> for Signature {
 
     fn try_from(bytes: &[u8]) -> Result<Signature> {
         let bytes: [u8; Self::BYTE_SIZE] = bytes.try_into().map_err(|_| Error::new())?;
-        let (r_bytes, sq_bytes) = bytes.split_at(Self::BYTE_SIZE / 3);
-        let (s_bytes, q_bytes) = sq_bytes.split_at(Self::BYTE_SIZE / 3);
+        let (r_bytes, s_bytes) = bytes.split_at(Self::BYTE_SIZE / 2);
 
         let r_fe: FieldElement =
             Option::from(FieldElement::from_bytes(r_bytes.into())).ok_or_else(Error::new)?;
@@ -173,15 +296,8 @@ impl TryFrom<&[u8]> for Signature {
 
         let sign = NonZeroScalar::try_from(s_bytes).map_err(|_| Error::new())?;
 
+        Ok(Self { bytes, r, sign})
 
-        let result = match VerifyingKey::from_bytes(&q_bytes) {
-            Ok(q) => {
-                let Q = *q.as_affine();
-                Ok(Self { bytes, r, sign, Q})
-            },
-            Err(e) => Err(e),
-        };
-        result  
     }
 }
 
@@ -201,13 +317,6 @@ impl signature::PrehashSignature for Signature {
     type Digest = Sha256;
 }
 
-fn tagged_hash(tag: &[u8]) -> Sha256 {
-    let tag_hash = Sha256::digest(tag);
-    let mut digest = Sha256::new();
-    digest.update(&tag_hash);
-    digest.update(&tag_hash);
-    digest
-}
 
 // Test vectors from:
 // https://github.com/bitcoin/bips/blob/master/bip-0340/test-vectors.csv
@@ -504,7 +613,7 @@ mod tests {
                 VerifyingKey::from_bytes(&vector.public_key),
                 Signature::from_bytes(&vector.signature),
             ) {
-                (Ok(pk), Ok(sig)) => pk.verify_pre_prehashed(&vector.message, &sig).is_ok(),
+                (Ok(pk), Ok(sig)) => pk.verify_prehashed(&vector.message, &sig).is_ok(),
                 _ => false,
             };
 

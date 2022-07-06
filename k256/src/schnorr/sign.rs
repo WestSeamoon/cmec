@@ -1,5 +1,5 @@
 
-use super::{tagged_hash, Signature, VerifyingKey, AUX_TAG, CHALLENGE_TAG, NONCE_TAG};
+use super::{tagged_hash, Signature, pre_Signature, VerifyingKey, AUX_TAG, CHALLENGE_TAG, NONCE_TAG};
 use crate::{arithmetic::FieldElement, AffinePoint, FieldBytes, NonZeroScalar, ProjectivePoint, PublicKey, Scalar};
 use ecdsa_core::signature::{
     digest::{consts::U32, FixedOutput},
@@ -82,35 +82,23 @@ impl SigningKey {
     ///
     /// The preferred interfaces are the [`Signer`] or [`RandomizedSigner`] traits.
     /// 
-    
 
-
-
-    
+    ///预签名生成
     pub fn try_pre_sign_prehashed(
         &self,
         msg_digest: &[u8; 32],
         aux_rand: &[u8; 32],
         Y: &[u8],
-    ) -> (Result<Signature>) {
+    ) -> Result<pre_Signature> {
 
-        let mut t = tagged_hash(AUX_TAG).chain_update(aux_rand).finalize();
+        //生成k和K        
+        let k = Scalar::from_bytes_unchecked(&aux_rand);
 
-        for (a, b) in t.iter_mut().zip(self.secret_key.to_bytes().iter()) {
-            *a ^= b
-        }
+        //let K = ProjectivePoint::GENERATOR.to_affine() * k ;
+        //let K = (G_Aff * k).to_affine();
 
-        let rand = tagged_hash(NONCE_TAG)
-            .chain_update(&t)
-            .chain_update(&self.verifying_key.as_affine().x.to_bytes())
-            .chain_update(msg_digest)
-            .finalize();
-
-        //生成kH和K
-        let (k, K) = SigningKey::raw_from_bytes(&rand)?;
-
-
-        //预签名生成
+        let G_Aff = ProjectivePoint::GENERATOR.to_affine();
+        let K = AffinePoint::pub_mul(G_Aff, &k);
 
         //转换Y的类型
         let Y = VerifyingKey::from_bytes(&Y).unwrap();
@@ -122,113 +110,133 @@ impl SigningKey {
                 .finalize(),
         );
 
+        //let d_1 = Scalar::add(&self.secret_key, &Scalar::ONE);
+
         //计算Q
+        //let Q_Pro = AffinePoint::pub_mul(*Y, &d_1);
+        //let Q = Q_Pro.to_affine();
         let Q = (*Y * (*self.secret_key + Scalar::ONE)).to_affine();
 
         //将Q转换为ProjectivePoint类型
-        let Q_Pro = ProjectivePoint::from(Q);
+        //let Q_Pro = ProjectivePoint::from(Q);
 
         //计算Q+K
-        let f_Point = ProjectivePoint::add_mixed(&Q_Pro, &K);
+        let f_Point = ProjectivePoint::add_mixed(&K, &Q);
 
         //转换为AffinePoint类型
         let f_Aff = ProjectivePoint::to_affine(&f_Point);
         
         //获取x
-        let f_x = <Scalar as Reduce<U256>>::from_be_bytes_reduced(f_Aff.x.to_bytes());
+        let f_x = Scalar::pub_from_repr(f_Aff.x.to_bytes()).unwrap();
+        //let f_x = <Scalar as Reduce<U256>>::from_be_bytes_reduced(f_Aff.x.to_bytes());
 
-        let r = hm + f_x;
+        let r = Scalar::add(&hm, &f_x);
+/*
+        let rd = Scalar::mul(&r, &self.secret_key);
 
-        //let k_rd = *secret_key - r * *secret_key;
+        let k_rd = Scalar::sub(&k, &rd);
 
-        //let d_1 = (*self.secret_key + Scalar::ONE).invert().unwrap();
-
-
+        //计算d+1并取倒数
+        let d_1_invert = d_1.invert().unwrap();
+*/
         //求预签名值pre_sign
-        let pre_sign = (*k - r * *self.secret_key) * (*self.secret_key + Scalar::ONE).invert().unwrap();
+        //let pre_sign = Scalar::mul(&d_1_invert, &k_rd);
+        let pre_sign = (k - r * *self.secret_key) * (*self.secret_key + Scalar::ONE).invert().unwrap();
         
         //预签名w为(r,pre_sign,Q)
 
         let pre_sign: NonZeroScalar = Option::from(NonZeroScalar::new(pre_sign)).ok_or_else(Error::new)?;
 
-        let mut bytes = [0u8; Signature::BYTE_SIZE];
-        let (r_bytes, sq_bytes) = bytes.split_at_mut(Signature::BYTE_SIZE / 3);
-        let (s_bytes, q_bytes) = sq_bytes.split_at_mut(Signature::BYTE_SIZE / 3);
+        let mut bytes = [0u8; pre_Signature::BYTE_SIZE];
+        let (r_bytes, sq_bytes) = bytes.split_at_mut(pre_Signature::BYTE_SIZE / 3);
+        let (s_bytes, q_bytes) = sq_bytes.split_at_mut(pre_Signature::BYTE_SIZE / 3);
         r_bytes.copy_from_slice(&r.to_bytes());
         s_bytes.copy_from_slice(&pre_sign.to_bytes());  
         q_bytes.copy_from_slice(&Q.x.to_bytes()); 
-        let sig = Signature { bytes, r: r, sign: pre_sign, Q:Q };
 
+
+        //验证测试
+        let rs = Scalar::add(&r, &pre_sign);
+        let sg = ProjectivePoint::GENERATOR * *pre_sign;
+        let P = ProjectivePoint::GENERATOR * *self.secret_key;
+        let P_Aff = P.to_affine();
+        let rsp = (P * rs).to_affine();
+        let KK = ProjectivePoint::add_mixed(&sg, &rsp);
+        let R = ProjectivePoint::add_mixed(&KK, &Q).to_affine();
+        //let rx =<Scalar as Reduce<U256>>::from_be_bytes_reduced(R.x.to_bytes());
+        let rx = Scalar::pub_from_repr(R.x.to_bytes()).unwrap();
+        let rr = Scalar::add(&hm, &rx);
+        if rr != r {
+            let r = Scalar::ZERO;
+            r_bytes.copy_from_slice(&r.to_bytes());
+        }
+
+        let sig = pre_Signature { bytes, r: r, sign: pre_sign, Q:Q };
         Ok(sig)
     }
 
 
-    //适配算法，获取签名值
+    ///适配算法，获取签名值
     pub fn try_sign_prehashed(
         &self,
         &pre_sign: &[u8; 96],
         y: &[u8; 32],
     ) -> Result<Signature> {
 
-        let pre_sign = Signature::pub_from_bytes(&pre_sign).unwrap();
+        let pre_sign = pre_Signature::pub_from_bytes(&pre_sign).unwrap();
 
-        let (r, s, Q) = pre_sign.split();
+        //将预签名分解获取r和s
+        let r = *pre_sign.split().0;
 
-        let r = *r;
-
-        let Q = *Q;
+        let pre_sign = pre_sign.split().1;
 
         //转换y的类型
         let y = Scalar::from_bytes_unchecked(&y);
     
         //计算正式签名
-        let sign = Scalar::add(&s, &y);
+        let sign = Scalar::add(&pre_sign, &y);
         //let sign = *s + y;
-
-        let mut bytes = [0u8; Signature::BYTE_SIZE];
 
         let sign: NonZeroScalar = Option::from(NonZeroScalar::new(sign)).ok_or_else(Error::new)?;
 
         let mut bytes = [0u8; Signature::BYTE_SIZE];
-        let (r_bytes, sq_bytes) = bytes.split_at_mut(Signature::BYTE_SIZE / 3);
-        let (s_bytes, q_bytes) = sq_bytes.split_at_mut(Signature::BYTE_SIZE / 3);
+        let (r_bytes, s_bytes) = bytes.split_at_mut(Signature::BYTE_SIZE / 2);
         r_bytes.copy_from_slice(&r.to_bytes());
         s_bytes.copy_from_slice(&sign.to_bytes());  
-        q_bytes.copy_from_slice(&Q.x.to_bytes()); 
 
-        let sig = Signature { bytes, r, sign, Q };
+        let sig = Signature { bytes, r, sign };
 
         Ok(sig)
 
     }
 
 
-    //提取算法，提取y
+    ///提取算法，提取y
     pub fn try_extract_y(
         &self,
         &pre_sign: &[u8; 96],
-        &sign: &[u8; 96],
-    ) -> [u8; 32] { //[u8; 32] {
+        &sign: &[u8; 64],
+    ) -> [u8; 32] {
 
-        let pre_sign = Signature::pub_from_bytes(&pre_sign).unwrap();
+        //转换两个签名的类型
+        let pre_sign = pre_Signature::pub_from_bytes(&pre_sign).unwrap();
 
         let sign = Signature::pub_from_bytes(&sign).unwrap();
 
-        let (r, pre_sign, Q) = pre_sign.split();
+        //获取两个签名的值
+        let pre_sign = pre_sign.split().1;
 
-        let (r, sign, Q) = sign.split();
+        let sign = sign.split().1;
 
+        //计算y
         let y = Scalar::sub(sign, pre_sign);
 
-        //let y = Scalar::as_bytes();
-
         let mut y_bytes = [0u8; 32];
+        
         y_bytes.copy_from_slice(&y.to_bytes());
 
         y_bytes
 
-        //提取y
-        //let yy = sign - pre_sign;
     }
 
 }
