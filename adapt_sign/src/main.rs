@@ -54,16 +54,23 @@ fn main() {
     let y_test = k256::sm2::SigningKey::try_extract_y(&sk, &pre_signature, &signature);
 
     let y_test_hex = hex::encode_upper(y_test);
-    println!("y的值为{:#?}",y_test_hex);
+    println!("提取y的值为{:#?}",y_test_hex);
 
+    
+    //困难关系对生成
+    let sum_diff = k256::sm2::SigningKey::gen_diff(&mut OsRng);
+    let y_key = hex::encode_upper(sum_diff.0);
+    let y_upper_key = hex::encode_upper(sum_diff.1);
+    println!("生成Y的值为{:#?}",y_key);
+    println!("生成y的值为{:#?}",y_upper_key);
    
 
     //密钥对生成
     let sum_key = k256::sm2::SigningKey::gen_key(&mut OsRng);
     let secret_key = hex::encode_upper(sum_key.0);
     let pub_key = hex::encode_upper(sum_key.1);
-    println!("私钥的值为{:#?}",secret_key);
-    println!("公钥的值为{:#?}",pub_key);
+    println!("生成的私钥值为{:#?}",secret_key);
+    println!("生成的公钥值为{:#?}",pub_key);
  
     //把公钥放mysql
     //连接数据库，设置连接字符串

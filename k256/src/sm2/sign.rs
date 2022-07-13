@@ -251,5 +251,19 @@ impl SigningKey {
         (secret_bytes,pub_bytes)
     }
 
+
+    ///生成困难关系对
+    pub fn gen_diff(rng: impl CryptoRng + RngCore) -> ([u8; 32],[u8; 32]) {
+        let key = SigningKey::random(rng);
+        let G_Aff = ProjectivePoint::GENERATOR.to_affine();
+        let y_upper_pro = AffinePoint::pub_mul(G_Aff, &key.secret_key);
+        let y_upper_key = y_upper_pro.to_affine();
+        let mut y_bytes = [0u8; 32];
+        let mut y_upper_bytes = [0u8; 32];
+        y_bytes.copy_from_slice(&key.secret_key.to_bytes());
+        y_upper_bytes.copy_from_slice(&y_upper_key.x.to_bytes());
+        (y_bytes,y_upper_bytes)
+    }
+
 }
 
